@@ -1,0 +1,14 @@
+{application, pcap,
+ [
+  {description, "An Erlang pcap library"},
+  {vsn, "1"},
+  {modules, [
+             pcap
+            ]},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {env, []}
+ ]}.
