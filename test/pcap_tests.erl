@@ -11,6 +11,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-render_test() ->
-  A = foobar,
-  ?assertEqual(A, pcap:render_file(A)).
+simple_test() ->
+  tshark:test("../data/ping.pcap"),
+  ?assert(true).
+
