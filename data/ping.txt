@@ -1,0 +1,2 @@
+  1   0.000000    127.0.0.1 -> 127.0.0.1    ICMP 88 Echo (ping) request  id=0xae4b, seq=0/0, ttl=64
+  2   0.000036    127.0.0.1 -> 127.0.0.1    ICMP 88 Echo (ping) reply    id=0xae4b, seq=0/0, ttl=64 (request in 1)
