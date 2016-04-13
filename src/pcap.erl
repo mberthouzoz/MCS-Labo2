@@ -1,8 +1,16 @@
+%%%-------------------------------------------------------------------
+%%% @author Michaël Berthouzoz - Marc Pellet - David Villa
+%%% @copyright (C) 2016, <COMPANY>
+%%% @doc
+%%%
+%%% @end
+%%% Created : 24. mars 2016 12:13
+%%%-------------------------------------------------------------------
 -module(pcap).
 
 %% pcap: pcap library's entry point.
 
--export([render_file/1, render_file/2]).
+-export([render_file/1, render_file/2, icmp_type_int_to_txt/1, icmp_protocol_int_to_txt/1, open_file/1]).
 
 %% Magic Number
 -define(PCAP_MAGIC_NATIVE, 16#a1b2c3d4).
@@ -50,6 +58,7 @@ render_file(F, O) ->
 open_file(F) ->
   file:open(F, [read, binary, raw]).
 
+%% Parse the pcap header
 pcap_header(F) ->
   case read_file(F, 24) of
     <<?PCAP_MAGIC_NATIVE:32/native, Major:16, Minor:16, Thiszone:32, Sigfigs:32, Snaplen:32, Network:32>> ->
@@ -59,6 +68,7 @@ pcap_header(F) ->
     {error, Any} -> {error, {bad_header, Any}}
   end.
 
+%% Parse the packet header
 packet_header(F) ->
   case read_file(F, 16) of
     <<TsSec:32/little, TsUsec:32/little, InclLen:32/little, OrigLen:32/little>> ->
@@ -68,39 +78,45 @@ packet_header(F) ->
     Any -> {error, {bad_header, Any}}
   end.
 
+%% Read data of the packet
 read_data([{error, eof} | _], _, _) -> ok;
 read_data([{ok, Header, Payload} | T], Parser, Acc) ->
   {ok, Packet} = Parser(Payload),
+  <<TypeICMP:8, _/binary>> = Packet#ipHeader.payload,
   Protocol = icmp_protocol_int_to_txt(Packet#ipHeader.protocol),
-  Type = icmp_type_int_to_txt(0),
+  Type = icmp_type_int_to_txt(TypeICMP),
   {ok, Src} = addr_format(Packet#ipHeader.src),
   {ok, Dest} = addr_format(Packet#ipHeader.dest),
-  io:format("~p ~p.~p.~p.~p -> ~p.~p.~p.~p    ~s ~p ~s ttl=~p~n", [Acc, Src#ipAddr.a, Src#ipAddr.b, Src#ipAddr.c, Src#ipAddr.d, Dest#ipAddr.a, Dest#ipAddr.b, Dest#ipAddr.c, Dest#ipAddr.d, Protocol, Header#packetHeader.inclLen, Type, Packet#ipHeader.ttl]),
+  io:format("  ~p    ~p.~p.~p.~p -> ~p.~p.~p.~p    ~s ~p ~s ttl=~p~n",
+    [Acc, Src#ipAddr.a, Src#ipAddr.b, Src#ipAddr.c, Src#ipAddr.d, Dest#ipAddr.a, Dest#ipAddr.b,
+      Dest#ipAddr.c, Dest#ipAddr.d, Protocol, Header#packetHeader.inclLen, Type, Packet#ipHeader.ttl]),
   read_data(T(), Parser, Acc + 1).
 
+%% Read more data of the packet
 read_data_verbose([{error, eof} | _], _, _) -> ok;
 read_data_verbose([{ok, Header, Payload} | T], Parser, Acc) ->
   {ok, Packet} = Parser(Payload),
-  io:format("Frame ~p: ~p bytes on wire (~p bits), ~p bytes on captured (~p)~n", [Acc, Header#packetHeader.inclLen, 8 * Header#packetHeader.inclLen, Header#packetHeader.origLen, Header#packetHeader.origLen * 8]),
-  io:format("  Encapsulation type: NULL/Loopback (15)~n"),
+  <<TypeICMP:8, Code:8, _/binary>> = Packet#ipHeader.payload,
+  io:format("Frame ~p: ~p bytes on wire (~p bits), ~p bytes on captured (~p)~n",
+    [Acc, Header#packetHeader.inclLen, 8 * Header#packetHeader.inclLen, Header#packetHeader.origLen,
+      Header#packetHeader.origLen * 8]),
+  io:format("  Encapsulation type: ~p (15)~n", [get_type_text(?NULL_LOOPBACK)]),
   io:format("  Arrival Time: ~p~n", [Header#packetHeader.tsSec]),
-  io:format("  [Time shift for this packet: 0.000000000 seconds]~n"),
-  io:format("  [Epoch Time: 1458507088.879754000 seconds]~n"),
+  io:format("  [Epoch Time: ~p seconds]~n", [Header#packetHeader.tsSec]),
   Protocol = icmp_protocol_int_to_txt(Packet#ipHeader.protocol),
   io:format("  Protocol: ~p (~p)~n", [Protocol, Packet#ipHeader.protocol]),
-  Type = icmp_type_int_to_txt(0),
-  io:format("  Type: ~p (~s)~n", [0, Type]),
+  Type = icmp_type_int_to_txt(TypeICMP),
+  io:format("  Type: ~p (~s)~n", [TypeICMP, Type]),
+  io:format("  Code: ~p ~n~n", [Code]),
   read_data_verbose(T(), Parser, Acc + 1).
 
 
 %% Parse paylod from LINKTYPE_NULL
 parse_type_null(P) ->
   <<ProtocolFamily:32/native, Rest/binary>> = P,
-  try ProtocolFamily of
+  case ProtocolFamily of
     ?FAMILY -> ip_packet(Rest);
     Any -> {error, {bad_family, Any}}
-  catch
-    error:Any -> {error, Any}
   end.
 
 
@@ -116,6 +132,7 @@ read_file(F, Len) ->
     eof -> {error, eof}
   end.
 
+%% Read the packet
 read_packet(F) ->
   case packet_header(F) of
     {ok, Header} ->
@@ -123,8 +140,6 @@ read_packet(F) ->
       {ok, Header, Payload};
     {error, Any} -> {error, Any}
   end.
-
-packet_reader(F) -> [read_packet(F) | fun() -> packet_reader(F) end].
 
 %% Parse ip packet
 %% match and return ok or return error
@@ -147,6 +162,8 @@ ip_packet(Payload) ->
     _ -> {error, ip_payload}
   end.
 
+packet_reader(F) -> [read_packet(F) | fun() -> packet_reader(F) end].
+
 %% Convert int protocole to string
 icmp_protocol_int_to_txt(P) ->
   case P of
@@ -167,5 +184,12 @@ addr_format(Addr) ->
   <<A:8, B:8, C:8, D:8>> = Addr,
   IpAddr = #ipAddr{a = A, b = B, c = C, d = D},
   {ok, IpAddr}.
+
+%% Return type of network
+get_type_text(Type) ->
+  case Type of
+    0 -> "NULL/Loopback";
+    _ -> "Other"
+  end.
 
 %% End of Module.
