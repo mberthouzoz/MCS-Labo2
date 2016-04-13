@@ -128,8 +128,8 @@ get_type_null(Type) when Type =:= ?NULL_LOOPBACK ->
 read_file(F, Len) ->
   case file:read(F, Len) of
     {ok, Data} -> Data;
-    {error, Any} -> {error, Any};
-    eof -> {error, eof}
+    eof -> {error, eof};
+    {error, Any} -> {error, Any}
   end.
 
 %% Read the packet
@@ -138,6 +138,7 @@ read_packet(F) ->
     {ok, Header} ->
       Payload = read_file(F, Header#packetHeader.inclLen),
       {ok, Header, Payload};
+    eof -> {error, eof};
     {error, Any} -> {error, Any}
   end.
 
