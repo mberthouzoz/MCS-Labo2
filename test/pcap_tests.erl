@@ -19,10 +19,13 @@ render_verbose_test() ->
   pcap:render_file("../data/ping.pcap", ['V']),
   ?assert(true).
 
-
 result_from_ping_pcap_test() ->
   {ok, Expected} = file:read_file("../data/ping.txt"),
-  {ok, Actual} = pcap:render_file("../data/ping.pcap"),
-  io:format(" ~p~n", [Actual]),
-  ?assertEqual(binary_to_list(Expected), lists:flatten(Actual)).
+  {ok, Expr} = pcap:render_file("../data/ping.pcap"),
+  ?assertEqual(binary_to_list(Expected), lists:flatten(Expr)).
+
+result_from_ping_pcap_verbose_test() ->
+  {ok, Expected} = file:read_file("../data/pingVerbose.txt"),
+  {ok, Expr} = pcap:render_file("../data/ping.pcap", ['V']),
+  ?assertEqual(binary_to_list(Expected), lists:flatten(Expr)).
 

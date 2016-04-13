@@ -23,6 +23,7 @@
 %% timestamp seconds, timestamp microseconds, number of octets of packet saved in file, actual length of packet
 -record(packetHeader, {tsSec, tsUSec, inclLen, origLen}).
 -record(ipHeader, {ds, id, flags, fragmentOffset, ttl, protocol, src, dest, options, payload}).
+-record(ipAddr, {a, b, c, d}).
 
 
 %% API
@@ -36,7 +37,7 @@ render_file(F) ->
 
 render_file(F, O) ->
   case O of
-    'V' ->
+    ['V'] ->
       {ok, IO} = open_file(F),
       {ok, PcapHeader} = pcap_header(IO),
       {ok, Parser} = get_type_null(PcapHeader#pcapHeader.network),
@@ -62,7 +63,7 @@ packet_header(F) ->
   case read_file(F, 16) of
     <<TsSec:32/little, TsUsec:32/little, InclLen:32/little, OrigLen:32/little>> ->
       Header = #packetHeader{tsSec = TsSec, tsUSec = TsUsec, inclLen = InclLen, origLen = OrigLen},
-    {ok, Header};
+      {ok, Header};
     {error, eof} -> {error, eof};
     Any -> {error, {bad_header, Any}}
   end.
@@ -72,16 +73,24 @@ read_data([{ok, Header, Payload} | T], Parser, Acc) ->
   {ok, Packet} = Parser(Payload),
   Protocol = icmp_protocol_int_to_txt(Packet#ipHeader.protocol),
   Type = icmp_type_int_to_txt(0),
-  io:format("~p ~p -> ~p    ~s ~p ~s ttl=~p~n", [Acc, Packet#ipHeader.src, Packet#ipHeader.dest, Protocol, Header#packetHeader.inclLen, Type, Packet#ipHeader.ttl]),
+  {ok, Src} = addr_format(Packet#ipHeader.src),
+  {ok, Dest} = addr_format(Packet#ipHeader.dest),
+  io:format("~p ~p.~p.~p.~p -> ~p.~p.~p.~p    ~s ~p ~s ttl=~p~n", [Acc, Src#ipAddr.a, Src#ipAddr.b, Src#ipAddr.c, Src#ipAddr.d, Dest#ipAddr.a, Dest#ipAddr.b, Dest#ipAddr.c, Dest#ipAddr.d, Protocol, Header#packetHeader.inclLen, Type, Packet#ipHeader.ttl]),
   read_data(T(), Parser, Acc + 1).
 
 read_data_verbose([{error, eof} | _], _, _) -> ok;
 read_data_verbose([{ok, Header, Payload} | T], Parser, Acc) ->
   {ok, Packet} = Parser(Payload),
+  io:format("Frame ~p: ~p bytes on wire (~p bits), ~p bytes on captured (~p)~n", [Acc, Header#packetHeader.inclLen, 8 * Header#packetHeader.inclLen, Header#packetHeader.origLen, Header#packetHeader.origLen * 8]),
+  io:format("  Encapsulation type: NULL/Loopback (15)~n"),
+  io:format("  Arrival Time: ~p~n", [Header#packetHeader.tsSec]),
+  io:format("  [Time shift for this packet: 0.000000000 seconds]~n"),
+  io:format("  [Epoch Time: 1458507088.879754000 seconds]~n"),
   Protocol = icmp_protocol_int_to_txt(Packet#ipHeader.protocol),
+  io:format("  Protocol: ~p (~p)~n", [Protocol, Packet#ipHeader.protocol]),
   Type = icmp_type_int_to_txt(0),
-  io:format("~p ~p -> ~p    ~s ~p ~s ttl=~p~n", [Acc, Packet#ipHeader.src, Packet#ipHeader.dest, Protocol, Header#packetHeader.inclLen, Type, Packet#ipHeader.ttl]),
-  read_data(T(), Parser, Acc + 1).
+  io:format("  Type: ~p (~s)~n", [0, Type]),
+  read_data_verbose(T(), Parser, Acc + 1).
 
 
 %% Parse paylod from LINKTYPE_NULL
@@ -115,17 +124,17 @@ read_packet(F) ->
     {error, Any} -> {error, Any}
   end.
 
-packet_reader(F) -> [read_packet(F) | fun() -> packet_reader(F) end ].
+packet_reader(F) -> [read_packet(F) | fun() -> packet_reader(F) end].
 
 %% Parse ip packet
 %% match and return ok or return error
 ip_packet(Payload) ->
   case Payload of
     <<?IP_VERSION:4, IHL:4, DS:8/big, Length:16/big,
-        Identification:16/big, Flags:3, FragOffset:13/big,
-        TTL:8, Protocol:8, _:16,
-        SourceIP:4/binary,
-        DestinationIP:4/binary,
+      Identification:16/big, Flags:3, FragOffset:13/big,
+      TTL:8, Protocol:8, _:16,
+      SourceIP:4/binary,
+      DestinationIP:4/binary,
       Rest/binary>> when IHL >= ?IP_MIN_HDR_LEN ->
       OptionLen = (IHL - ?IP_MIN_HDR_LEN) * 4,
       PayloadLen = (Length - (IHL * 4)),
@@ -141,7 +150,7 @@ ip_packet(Payload) ->
 %% Convert int protocole to string
 icmp_protocol_int_to_txt(P) ->
   case P of
-    1 ->  "ICMP";
+    1 -> "ICMP";
     _ -> "OTHER"
   end.
 
@@ -152,5 +161,11 @@ icmp_type_int_to_txt(T) ->
     8 -> "Echo (ping) request";
     _ -> "Other"
   end.
+
+%% Transforme address <<127, 0, 0, 1>> to 127.0.0.1
+addr_format(Addr) ->
+  <<A:8, B:8, C:8, D:8>> = Addr,
+  IpAddr = #ipAddr{a = A, b = B, c = C, d = D},
+  {ok, IpAddr}.
 
 %% End of Module.
