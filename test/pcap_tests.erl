@@ -11,7 +11,18 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-simple_test() ->
+render_test() ->
   pcap:render_file("../data/ping.pcap"),
   ?assert(true).
+
+render_verbose_test() ->
+  pcap:render_file("../data/ping.pcap", ['V']),
+  ?assert(true).
+
+
+result_from_ping_pcap_test() ->
+  {ok, Expected} = file:read_file("../data/ping.txt"),
+  {ok, Actual} = pcap:render_file("../data/ping.pcap"),
+  io:format(" ~p~n", [Actual]),
+  ?assertEqual(binary_to_list(Expected), lists:flatten(Actual)).
 

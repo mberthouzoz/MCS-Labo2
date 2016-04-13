@@ -2,7 +2,7 @@
 
 %% pcap: pcap library's entry point.
 
--export([render_file/1]).
+-export([render_file/1, render_file/2]).
 
 %% Magic Number
 -define(PCAP_MAGIC_NATIVE, 16#a1b2c3d4).
@@ -30,10 +30,20 @@
 render_file(F) ->
   {ok, IO} = open_file(F),
   {ok, PcapHeader} = pcap_header(IO),
-  io:format("PcapHeader ~p~n", [PcapHeader]),
   {ok, Parser} = get_type_null(PcapHeader#pcapHeader.network),
   Reader = packet_reader(IO),
-  read_data(Reader, Parser, 0).
+  read_data(Reader, Parser, 1).
+
+render_file(F, O) ->
+  case O of
+    'V' ->
+      {ok, IO} = open_file(F),
+      {ok, PcapHeader} = pcap_header(IO),
+      {ok, Parser} = get_type_null(PcapHeader#pcapHeader.network),
+      Reader = packet_reader(IO),
+      read_data_verbose(Reader, Parser, 1);
+    _ -> {error, option_forbidden}
+  end.
 
 %% Internals
 open_file(F) ->
@@ -59,21 +69,27 @@ packet_header(F) ->
 
 read_data([{error, eof} | _], _, _) -> ok;
 read_data([{ok, Header, Payload} | T], Parser, Acc) ->
-  io:format("Packet ~p~n", [Acc]),
-  io:format("    Header : ~p~n", [Header]),
-  io:format("    Payload : ~p~n", [Payload]),
-  Packet = Parser(Payload),
-  io:format("    Packet : ~p~n", [Packet]),
+  {ok, Packet} = Parser(Payload),
+  Protocol = icmp_protocol_int_to_txt(Packet#ipHeader.protocol),
+  Type = icmp_type_int_to_txt(0),
+  io:format("~p ~p -> ~p    ~s ~p ~s ttl=~p~n", [Acc, Packet#ipHeader.src, Packet#ipHeader.dest, Protocol, Header#packetHeader.inclLen, Type, Packet#ipHeader.ttl]),
+  read_data(T(), Parser, Acc + 1).
+
+read_data_verbose([{error, eof} | _], _, _) -> ok;
+read_data_verbose([{ok, Header, Payload} | T], Parser, Acc) ->
+  {ok, Packet} = Parser(Payload),
+  Protocol = icmp_protocol_int_to_txt(Packet#ipHeader.protocol),
+  Type = icmp_type_int_to_txt(0),
+  io:format("~p ~p -> ~p    ~s ~p ~s ttl=~p~n", [Acc, Packet#ipHeader.src, Packet#ipHeader.dest, Protocol, Header#packetHeader.inclLen, Type, Packet#ipHeader.ttl]),
   read_data(T(), Parser, Acc + 1).
 
 
 %% Parse paylod from LINKTYPE_NULL
 parse_type_null(P) ->
   <<ProtocolFamily:32/native, Rest/binary>> = P,
-  io:format("~p~n", [ProtocolFamily]),
   try ProtocolFamily of
     ?FAMILY -> ip_packet(Rest);
-    Any -> {error, {unsoported_pf, Any}}
+    Any -> {error, {bad_family, Any}}
   catch
     error:Any -> {error, Any}
   end.
@@ -81,7 +97,7 @@ parse_type_null(P) ->
 
 %% Get only LINKTYPE_NULL
 get_type_null(Type) when Type =:= ?NULL_LOOPBACK ->
-  {ok, fun(Paylod) -> parse_type_null(Paylod) end}.
+  {ok, fun(Payload) -> parse_type_null(Payload) end}.
 
 %% Read a portion of a file
 read_file(F, Len) ->
@@ -90,7 +106,6 @@ read_file(F, Len) ->
     {error, Any} -> {error, Any};
     eof -> {error, eof}
   end.
-
 
 read_packet(F) ->
   case packet_header(F) of
@@ -103,7 +118,7 @@ read_packet(F) ->
 packet_reader(F) -> [read_packet(F) | fun() -> packet_reader(F) end ].
 
 %% Parse ip packet
-%% match and retourn ok or return error
+%% match and return ok or return error
 ip_packet(Payload) ->
   case Payload of
     <<?IP_VERSION:4, IHL:4, DS:8/big, Length:16/big,
@@ -114,16 +129,28 @@ ip_packet(Payload) ->
       Rest/binary>> when IHL >= ?IP_MIN_HDR_LEN ->
       OptionLen = (IHL - ?IP_MIN_HDR_LEN) * 4,
       PayloadLen = (Length - (IHL * 4)),
-      io:format("IHL ~p, Length ~p, OptionLen ~p, PayloadLen ~p, RestLen ~p~nRest :~p~n", [IHL, Length, OptionLen, PayloadLen, byte_size(Rest), Rest]),
       <<Options:OptionLen/binary, RestPayload:PayloadLen/binary>> = Rest,
       IpPacket = #ipHeader{ds = DS, id = Identification, flags = Flags,
         fragmentOffset = FragOffset, ttl = TTL, protocol = Protocol,
         src = SourceIP, dest = DestinationIP,
         options = Options, payload = RestPayload},
-      {ok, {ipv4, IpPacket}};
+      {ok, IpPacket};
     _ -> {error, ip_payload}
   end.
 
+%% Convert int protocole to string
+icmp_protocol_int_to_txt(P) ->
+  case P of
+    1 ->  "ICMP";
+    _ -> "OTHER"
+  end.
 
+%% Convert int type to string
+icmp_type_int_to_txt(T) ->
+  case T of
+    0 -> "Echo (ping) reply";
+    8 -> "Echo (ping) request";
+    _ -> "Other"
+  end.
 
 %% End of Module.
